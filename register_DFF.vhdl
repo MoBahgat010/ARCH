@@ -1,5 +1,7 @@
+library IEEE;
+USE IEEE.STD_LOGIC_1164.ALL;
 ENTITY my_nDFF IS
-GENERIC ( n : integer := 16);
+GENERIC ( n : integer := 8);
 PORT(
     clk : IN std_logic;
     reset : IN std_logic;

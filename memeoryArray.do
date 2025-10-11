@@ -7,8 +7,7 @@ sim:/register_file/rd_addr1 \
 sim:/register_file/wr_addr \
 sim:/register_file/data_in \
 sim:/register_file/data_out0 \
-sim:/register_file/data_out1 \
-sim:/register_file/reg
+sim:/register_file/data_out1
 force -freeze sim:/register_file/clk 0 1, 1 {50 ps} -r 100
 force -freeze sim:/register_file/reset 1 0
 force -freeze sim:/register_file/rd_addr0 000 0
