@@ -2,7 +2,7 @@ library IEEE;
 USE IEEE.STD_LOGIC_1164.ALL;
 USE IEEE.numeric_std.all;
 
-ENTITY Assignment3 IS
+ENTITY register_file IS
 PORT (
     clk: IN STD_LOGIC;
     reset: IN STD_LOGIC;
@@ -14,9 +14,9 @@ PORT (
     data_out0: OUT STD_LOGIC_VECTOR(7 downto 0);
     data_out1: OUT STD_LOGIC_VECTOR(7 downto 0)
 );
-END ENTITY Assignment3;
+END ENTITY register_file;
 
-ARCHITECTURE register_file_nDFF OF Assignment3 is
+ARCHITECTURE register_file_nDFF OF register_file is
   COMPONENT my_nDFF
     GENERIC ( n : integer := 8);
     PORT(
