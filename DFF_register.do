@@ -1,4 +1,4 @@
-add wave -position insertpoint  \
+add wave -radix hex -position insertpoint  \
 sim:/register_file/clk \
 sim:/register_file/reset \
 sim:/register_file/write_enable \
