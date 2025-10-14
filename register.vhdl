@@ -2,7 +2,7 @@ library IEEE;
 USE IEEE.STD_LOGIC_1164.ALL;
 USE IEEE.numeric_std.all;
 
-ENTITY register_file IS
+ENTITY Assignment_Array IS
 PORT (
     clk: IN STD_LOGIC;
     reset: IN STD_LOGIC;
@@ -14,9 +14,9 @@ PORT (
     data_out0: OUT STD_LOGIC_VECTOR(7 downto 0);
     data_out1: OUT STD_LOGIC_VECTOR(7 downto 0)
 );
-END ENTITY register_file;
+END ENTITY Assignment_Array;
     
-ARCHITECTURE register_file_arch OF register_file is
+ARCHITECTURE register_file_arch OF Assignment_Array is
 TYPE reg_file_type IS ARRAY(0 TO 7) OF STD_LOGIC_VECTOR(7 downto 0);
 SIGNAL reg: reg_file_type;
 BEGIN
