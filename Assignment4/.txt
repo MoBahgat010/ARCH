@@ -1,0 +1,6 @@
+input: switches[log2(NUM_FLOORS)-1:0];
+input: reset;
+input: push_button;
+
+output: mv_up; move_down; door_open; curr_floor -> integer;
+clk: 50mhz;
