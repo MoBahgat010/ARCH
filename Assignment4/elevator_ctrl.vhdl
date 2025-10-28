@@ -6,7 +6,7 @@ USE IEEE.MATH_REAL.ALL;
 ENTITY elevator_ctrl IS
     GENERIC (
         NUM_FLOORS : INTEGER := 10;
-        CLK_FREQ   : INTEGER := 50000000  -- Clock frequency in Hz (default 50 MHz)
+        CLK_FREQ   : INTEGER := 50000000  -- 50 MHz
     );
     PORT (
         reset       : IN  STD_LOGIC;
@@ -17,12 +17,12 @@ ENTITY elevator_ctrl IS
         move_down   : OUT STD_LOGIC;
         door_open   : OUT STD_LOGIC;
         curr_floor  : OUT INTEGER RANGE 0 TO NUM_FLOORS-1;
-        ssd_out     : OUT STD_LOGIC_VECTOR(6 DOWNTO 0)  -- Seven-segment display output
+    ssd_out     : OUT STD_LOGIC_VECTOR(6 DOWNTO 0)  -- seven segment display
     );
 END ENTITY elevator_ctrl;
 
 ARCHITECTURE behavior OF elevator_ctrl IS
-    -- Component declaration for Seven-Segment Display
+    -- seven segment driver
     COMPONENT ssd IS
         PORT (
             hex_in  : IN  STD_LOGIC_VECTOR (3 DOWNTO 0);
@@ -64,16 +64,14 @@ BEGIN
     curr_floor <= current_floor;
     floor_bcd <= STD_LOGIC_VECTOR(TO_UNSIGNED(current_floor, 4));
     
-    -- Seven-Segment Display instantiation
+    -- Seven-Segment display instantiation
     ssd_display: ssd
         PORT MAP (
             hex_in  => floor_bcd,
             ssd_out => ssd_out
         );
     
-    -----------------------------------------------------------
-    -- CLOCK ENABLE GENERATOR: 1-second pulse for timers
-    -----------------------------------------------------------
+    -- Clock Enable Generator: 1-second pulse for timers
     clk_enable_gen: PROCESS(clk, reset)
     BEGIN
         IF reset = '1' THEN
@@ -94,9 +92,7 @@ BEGIN
         END IF;
     END PROCESS clk_enable_gen;
     
-    -----------------------------------------------------------
-    -- REQUEST REGISTER: Handle floor button presses and clear served requests
-    -----------------------------------------------------------
+    -- Request Register: handle floor button presses and clear served requests
     request_register: PROCESS(reset, push_button, clk)
         VARIABLE requested_floor : INTEGER;
     BEGIN
@@ -116,10 +112,7 @@ BEGIN
         END IF;
     END PROCESS request_register;
     
-    -----------------------------------------------------------
-    -- TARGET RESOLVER: Priority scheduling algorithm
-    -- Priority: closest floor in current direction, then reverse
-    -----------------------------------------------------------
+    -- Prioritize closest floor in current direction, then reverse
     resolve_target: PROCESS(floor_requests, current_floor, last_direction)
         VARIABLE found : BOOLEAN;
         
@@ -173,9 +166,7 @@ BEGIN
         END IF;
     END PROCESS resolve_target;
     
-    -----------------------------------------------------------
-    -- MAIN FSM: Elevator control with timer-based movement
-    -----------------------------------------------------------
+    -- Main elevator fsm
     unit_control: PROCESS(clk, reset)
         -- Procedure for timer-based state transitions
         PROCEDURE handle_timer(

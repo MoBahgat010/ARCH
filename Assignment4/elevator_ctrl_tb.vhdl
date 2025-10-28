@@ -26,11 +26,11 @@ ARCHITECTURE testbench OF elevator_ctrl_tb IS
         );
     END COMPONENT;
     
-    -- Test configuration - use smaller clock frequency for faster simulation
+    -- Test configuration - smaller clock frequency for faster simulation
     CONSTANT NUM_FLOORS_TB : INTEGER := 10;
-    CONSTANT CLK_FREQ_TB   : INTEGER := 100;  -- 100 Hz for fast simulation (2 sec = 200 clocks)
-    CONSTANT CLK_PERIOD    : TIME := 10 ms;   -- 100 Hz clock
-    CONSTANT FLOOR_TIME    : TIME := 2000 ms; -- Time for one floor transition (2 seconds)
+    CONSTANT CLK_FREQ_TB   : INTEGER := 100;  -- 100 Hz (2 sec = 200 clocks)
+    CONSTANT CLK_PERIOD    : TIME := 10 ms;   -- 100 Hz
+    CONSTANT FLOOR_TIME    : TIME := 2000 ms; -- Time for one floor transition
     CONSTANT FLOOR_TIMEOUT : TIME := 2500 ms; -- Timeout per floor (2.5 sec with margin)
     
     -- Testbench signals
