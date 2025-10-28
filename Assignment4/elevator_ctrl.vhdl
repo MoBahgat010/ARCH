@@ -16,119 +16,217 @@ ENTITY elevator_ctrl IS
         mv_up       : OUT STD_LOGIC;
         move_down   : OUT STD_LOGIC;
         door_open   : OUT STD_LOGIC;
-        curr_floor  : OUT INTEGER RANGE 0 TO NUM_FLOORS-1
+        curr_floor  : OUT INTEGER RANGE 0 TO NUM_FLOORS-1;
+        ssd_out     : OUT STD_LOGIC_VECTOR(6 DOWNTO 0)  -- Seven-segment display output
     );
 END ENTITY elevator_ctrl;
 
 ARCHITECTURE behavior OF elevator_ctrl IS
+    -- Component declaration for Seven-Segment Display
+    COMPONENT ssd IS
+        PORT (
+            hex_in  : IN  STD_LOGIC_VECTOR (3 DOWNTO 0);
+            ssd_out : OUT STD_LOGIC_VECTOR (6 DOWNTO 0)
+        );
+    END COMPONENT;
+    
     -- Constants
-    CONSTANT MOVE_TIME       : INTEGER := CLK_FREQ * 2;  -- 2 seconds for floor transition
+    CONSTANT MOVE_TIME : INTEGER := 2;
     
-    -- Request Resolver Signals
-    SIGNAL floor_requests    : STD_LOGIC_VECTOR(NUM_FLOORS-1 DOWNTO 0) := (OTHERS => '0');
-    SIGNAL target_floor      : INTEGER RANGE -1 TO NUM_FLOORS-1 := -1; -- -1 means no request
-    SIGNAL push_button_prev  : STD_LOGIC := '0';
-    
-    -- Unit Control Signals
-    SIGNAL current_floor     : INTEGER RANGE 0 TO NUM_FLOORS-1 := 0;
-    SIGNAL door_timer        : INTEGER RANGE 0 TO 3 := 0; -- Timer for door open duration
-    SIGNAL move_timer        : INTEGER RANGE 0 TO MOVE_TIME := 0; -- Timer for 2-second floor transition
-    
+    -- Type declarations
+    TYPE direction_type IS (DIR_UP, DIR_DOWN, DIR_NONE);
     TYPE state_type IS (IDLE, MOVING_UP, MOVING_DOWN, DOOR_OPENING);
-    SIGNAL current_state     : state_type := IDLE;
+    
+    -- Clock enable signals
+    SIGNAL clk_enable_1sec   : STD_LOGIC := '0';
+    SIGNAL clk_counter       : INTEGER RANGE 0 TO CLK_FREQ - 1 := 0;
+    SIGNAL reset_clk_counter : STD_LOGIC := '0';
+    
+    -- Request and control signals
+    SIGNAL floor_requests : STD_LOGIC_VECTOR(NUM_FLOORS-1 DOWNTO 0) := (OTHERS => '0');
+    SIGNAL target_floor   : INTEGER RANGE -1 TO NUM_FLOORS-1 := -1;
+    SIGNAL current_floor  : INTEGER RANGE 0 TO NUM_FLOORS-1 := 0;
+    SIGNAL last_direction : direction_type := DIR_NONE;
+    
+    -- State machine signals
+    SIGNAL current_state : state_type := IDLE;
+    SIGNAL prev_state    : state_type := IDLE;
+    
+    -- Timers
+    SIGNAL door_timer : INTEGER RANGE 0 TO MOVE_TIME := 0;
+    SIGNAL move_timer : INTEGER RANGE 0 TO MOVE_TIME := 0;
+    
+    -- SSD conversion signal
+    SIGNAL floor_bcd : STD_LOGIC_VECTOR(3 DOWNTO 0);
     
 BEGIN
     -- Output assignments
     curr_floor <= current_floor;
+    floor_bcd <= STD_LOGIC_VECTOR(TO_UNSIGNED(current_floor, 4));
+    
+    -- Seven-Segment Display instantiation
+    ssd_display: ssd
+        PORT MAP (
+            hex_in  => floor_bcd,
+            ssd_out => ssd_out
+        );
     
     -----------------------------------------------------------
-    -- REQUEST RESOLVER BLOCK
-    -- Manages floor request register and determines target floor
+    -- CLOCK ENABLE GENERATOR: 1-second pulse for timers
     -----------------------------------------------------------
-    request_resolver: PROCESS(reset, push_button, current_state)
+    clk_enable_gen: PROCESS(clk, reset)
+    BEGIN
+        IF reset = '1' THEN
+            clk_counter <= 0;
+            clk_enable_1sec <= '0';
+        ELSIF rising_edge(clk) THEN
+            IF reset_clk_counter = '1' OR clk_counter = CLK_FREQ - 1 THEN
+                clk_counter <= 0;
+                clk_enable_1sec <= '0';
+            ELSE
+                clk_counter <= clk_counter + 1;
+                clk_enable_1sec <= '0';
+            END IF;
+            
+            IF clk_counter = CLK_FREQ - 1 THEN
+                clk_enable_1sec <= '1';
+            END IF;
+        END IF;
+    END PROCESS clk_enable_gen;
+    
+    -----------------------------------------------------------
+    -- REQUEST REGISTER: Handle floor button presses and clear served requests
+    -----------------------------------------------------------
+    request_register: PROCESS(reset, push_button, clk)
         VARIABLE requested_floor : INTEGER;
     BEGIN
         IF reset = '1' THEN
             floor_requests <= (OTHERS => '0');
-            target_floor <= -1;
         ELSIF falling_edge(push_button) THEN
-            -- Register the floor request from switch_floor
             requested_floor := TO_INTEGER(UNSIGNED(switch_floor));
             IF requested_floor < NUM_FLOORS THEN
                 floor_requests(requested_floor) <= '1';
             END IF;
-        END IF;
-            
-        -- Clear the current floor request when elevator arrives
-        IF current_state = DOOR_OPENING AND current_floor = target_floor THEN
-            IF target_floor >= 0 AND target_floor < NUM_FLOORS THEN
+        ELSIF rising_edge(clk) THEN
+            -- Clear served request when door opens
+            IF current_state = DOOR_OPENING AND prev_state /= DOOR_OPENING AND 
+               target_floor >= 0 AND target_floor < NUM_FLOORS THEN
                 floor_requests(target_floor) <= '0';
             END IF;
         END IF;
-            
-        -- Resolve next target floor
-        -- Priority: closest floor in current direction, then reverse direction
-        target_floor <= -1; -- Reset first
-        
-        -- Look for requests above current floor
-        FOR i IN current_floor+1 TO NUM_FLOORS-1 LOOP
-            IF floor_requests(i) = '1' THEN
-                target_floor <= i;
-                EXIT;
-            END IF;
-        END LOOP;
-        
-        -- If no requests above, look for requests below
-        IF target_floor = -1 THEN
-            FOR i IN current_floor-1 DOWNTO 0 LOOP
-                IF floor_requests(i) = '1' THEN
-                    target_floor <= i;
-                    EXIT;
-                END IF;
-            END LOOP;
-        END IF;
-        
-        -- Check current floor request
-        -- IF target_floor = -1 AND floor_requests(current_floor) = '1' THEN
-        --     target_floor <= current_floor;
-        -- END IF;
-    END PROCESS request_resolver;
+    END PROCESS request_register;
     
     -----------------------------------------------------------
-    -- UNIT CONTROL FSM
-    -- Controls elevator movement based on target floor
-    -- Each floor transition takes 2 seconds
+    -- TARGET RESOLVER: Priority scheduling algorithm
+    -- Priority: closest floor in current direction, then reverse
+    -----------------------------------------------------------
+    resolve_target: PROCESS(floor_requests, current_floor, last_direction)
+        VARIABLE found : BOOLEAN;
+        
+        PROCEDURE search_direction(
+            start_idx : INTEGER;
+            end_idx   : INTEGER;
+            increment : INTEGER) IS
+        BEGIN
+            IF increment > 0 THEN
+                FOR i IN start_idx TO end_idx LOOP
+                    IF floor_requests(i) = '1' THEN
+                        target_floor <= i;
+                        found := TRUE;
+                        EXIT;
+                    END IF;
+                END LOOP;
+            ELSE
+                FOR i IN start_idx DOWNTO end_idx LOOP
+                    IF floor_requests(i) = '1' THEN
+                        target_floor <= i;
+                        found := TRUE;
+                        EXIT;
+                    END IF;
+                END LOOP;
+            END IF;
+        END PROCEDURE;
+        
+    BEGIN
+        target_floor <= -1;
+        found := FALSE;
+        
+        -- Check current floor first
+        IF floor_requests(current_floor) = '1' THEN
+            target_floor <= current_floor;
+            found := TRUE;
+        END IF;
+        
+        -- Search based on last direction
+        IF NOT found THEN
+            IF last_direction = DIR_UP OR last_direction = DIR_NONE THEN
+                search_direction(current_floor + 1, NUM_FLOORS - 1, 1);
+                IF NOT found THEN
+                    search_direction(current_floor - 1, 0, -1);
+                END IF;
+            ELSIF last_direction = DIR_DOWN THEN
+                search_direction(current_floor - 1, 0, -1);
+                IF NOT found THEN
+                    search_direction(current_floor + 1, NUM_FLOORS - 1, 1);
+                END IF;
+            END IF;
+        END IF;
+    END PROCESS resolve_target;
+    
+    -----------------------------------------------------------
+    -- MAIN FSM: Elevator control with timer-based movement
     -----------------------------------------------------------
     unit_control: PROCESS(clk, reset)
+        -- Procedure for timer-based state transitions
+        PROCEDURE handle_timer(
+            SIGNAL timer : INOUT INTEGER;
+            next_state   : state_type) IS
+        BEGIN
+            IF clk_enable_1sec = '1' THEN
+                IF timer < MOVE_TIME - 1 THEN
+                    timer <= timer + 1;
+                ELSE
+                    timer <= 0;
+                    current_state <= next_state;
+                END IF;
+            END IF;
+        END PROCEDURE;
+        
     BEGIN
         IF reset = '1' THEN
             current_state <= IDLE;
+            prev_state <= IDLE;
             current_floor <= 0;
             door_timer <= 0;
             move_timer <= 0;
             mv_up <= '0';
             move_down <= '0';
             door_open <= '0';
+            last_direction <= DIR_NONE;
+            reset_clk_counter <= '0';
             
         ELSIF rising_edge(clk) THEN
+            prev_state <= current_state;
+            
             CASE current_state IS
                 WHEN IDLE =>
                     mv_up <= '0';
                     move_down <= '0';
                     door_open <= '0';
-                    move_timer <= 0;
+                    reset_clk_counter <= '0';
                     
-                    -- Check if there's a valid target floor
                     IF target_floor /= -1 THEN
+                        move_timer <= 0;
+                        reset_clk_counter <= '1';
+                        
                         IF target_floor > current_floor THEN
                             current_state <= MOVING_UP;
-                            move_timer <= 0;
+                            last_direction <= DIR_UP;
                         ELSIF target_floor < current_floor THEN
                             current_state <= MOVING_DOWN;
-                            move_timer <= 0;
-                        ELSE -- target_floor = current_floor
+                            last_direction <= DIR_DOWN;
+                        ELSE
                             current_state <= DOOR_OPENING;
-                            door_timer <= 0;
                         END IF;
                     END IF;
                 
@@ -136,21 +234,20 @@ BEGIN
                     mv_up <= '1';
                     move_down <= '0';
                     door_open <= '0';
+                    reset_clk_counter <= '0';
                     
-                    -- Count 2 seconds before moving to next floor
-                    IF move_timer < MOVE_TIME - 1 THEN
-                        move_timer <= move_timer + 1;
-                    ELSE
-                        -- 2 seconds elapsed, move to next floor
-                        move_timer <= 0;
-                        IF current_floor < NUM_FLOORS - 1 THEN
-                            current_floor <= current_floor + 1;
-                        END IF;
-                        
-                        -- Check if reached target floor
-                        IF current_floor + 1 >= target_floor THEN
-                            current_state <= DOOR_OPENING;
-                            door_timer <= 0;
+                    IF clk_enable_1sec = '1' THEN
+                        IF move_timer < MOVE_TIME - 1 THEN
+                            move_timer <= move_timer + 1;
+                        ELSE
+                            move_timer <= 0;
+                            IF current_floor < NUM_FLOORS - 1 THEN
+                                current_floor <= current_floor + 1;
+                            END IF;
+                            
+                            IF current_floor + 1 >= target_floor THEN
+                                current_state <= DOOR_OPENING;
+                            END IF;
                         END IF;
                     END IF;
                 
@@ -158,21 +255,20 @@ BEGIN
                     mv_up <= '0';
                     move_down <= '1';
                     door_open <= '0';
+                    reset_clk_counter <= '0';
                     
-                    -- Count 2 seconds before moving to next floor
-                    IF move_timer < MOVE_TIME - 1 THEN
-                        move_timer <= move_timer + 1;
-                    ELSE
-                        -- 2 seconds elapsed, move to next floor
-                        move_timer <= 0;
-                        IF current_floor > 0 THEN
-                            current_floor <= current_floor - 1;
-                        END IF;
-                        
-                        -- Check if reached target floor
-                        IF current_floor - 1 <= target_floor THEN
-                            current_state <= DOOR_OPENING;
-                            door_timer <= 0;
+                    IF clk_enable_1sec = '1' THEN
+                        IF move_timer < MOVE_TIME - 1 THEN
+                            move_timer <= move_timer + 1;
+                        ELSE
+                            move_timer <= 0;
+                            IF current_floor > 0 THEN
+                                current_floor <= current_floor - 1;
+                            END IF;
+                            
+                            IF current_floor - 1 <= target_floor THEN
+                                current_state <= DOOR_OPENING;
+                            END IF;
                         END IF;
                     END IF;
                 
@@ -180,15 +276,15 @@ BEGIN
                     mv_up <= '0';
                     move_down <= '0';
                     door_open <= '1';
-                    move_timer <= 0;
+                    reset_clk_counter <= '0';
                     
-                    -- Keep door open for a few clock cycles
-                    IF door_timer < 2 THEN
-                        door_timer <= door_timer + 1;
-                    ELSE
-                        -- Door closing, return to IDLE
-                        current_state <= IDLE;
-                        door_timer <= 0;
+                    IF clk_enable_1sec = '1' THEN
+                        IF door_timer < MOVE_TIME - 1 THEN
+                            door_timer <= door_timer + 1;
+                        ELSE
+                            current_state <= IDLE;
+                            door_timer <= 0;
+                        END IF;
                     END IF;
                     
             END CASE;
