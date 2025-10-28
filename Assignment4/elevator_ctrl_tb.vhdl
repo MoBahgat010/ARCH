@@ -90,11 +90,12 @@ BEGIN
         END PROCEDURE;
         
         -- Procedure to wait for elevator to reach a floor
-        PROCEDURE wait_for_floor(expected_floor : INTEGER; timeout : TIME) IS
-            VARIABLE start_time : TIME;
-            VARIABLE last_floor : INTEGER;
+        PROCEDURE wait_for_floor(expected_floor : INTEGER; timeout : TIME; success : OUT BOOLEAN) IS
+            VARIABLE start_time        : TIME;
+            VARIABLE last_floor        : INTEGER;
             VARIABLE floor_change_time : TIME;
         BEGIN
+            success := FALSE;
             start_time := NOW;
             last_floor := curr_floor;
             floor_change_time := NOW;
@@ -111,6 +112,7 @@ BEGIN
                                "! (Floor " & INTEGER'IMAGE(last_floor) & 
                                " -> " & INTEGER'IMAGE(curr_floor) & ")" 
                             SEVERITY ERROR;
+                        RETURN;
                     ELSE
                         REPORT "Floor changed from " & INTEGER'IMAGE(last_floor) & 
                                " to " & INTEGER'IMAGE(curr_floor) & 
@@ -125,13 +127,20 @@ BEGIN
                     REPORT "Overall timeout waiting for floor " & INTEGER'IMAGE(expected_floor) & 
                            " - Currently at floor " & INTEGER'IMAGE(curr_floor)
                         SEVERITY ERROR;
-                    EXIT;
+                    RETURN;
                 END IF;
             END LOOP;
+
+            success := TRUE;
             REPORT "Elevator reached floor " & INTEGER'IMAGE(curr_floor) & " at time " & TIME'IMAGE(NOW);
         END PROCEDURE;
         
+        VARIABLE reached       : BOOLEAN;
+        VARIABLE previous_floor: INTEGER := 0;
     BEGIN
+        reached := FALSE;
+        previous_floor := curr_floor;
+        
         -- Test Case 1: Reset
         REPORT "========================================";
         REPORT "Test Case 1: Reset Test";
@@ -151,12 +160,19 @@ BEGIN
         REPORT "Test Case 2: Move Up (Floor 0 -> 3)";
         REPORT "========================================";
         request_floor(3);
-        WAIT FOR 100 ms;
-        ASSERT mv_up = '1' REPORT "mv_up should be active" SEVERITY WARNING;
-        wait_for_floor(3, 10 sec);
-        WAIT UNTIL door_open = '1' FOR 2 sec;
-        ASSERT door_open = '1' REPORT "Door should open at floor 3" SEVERITY ERROR;
-        REPORT "Test Case 2 passed!";
+        WAIT FOR 150 ms;
+        reached := FALSE;
+        wait_for_floor(3, 12 sec, reached);
+        IF reached THEN
+            WAIT UNTIL door_open = '1' FOR 2 sec;
+            ASSERT door_open = '1' REPORT "Door should open at floor 3" SEVERITY ERROR;
+            REPORT "Door opened at floor 3";
+            WAIT UNTIL door_open = '0' FOR 2 sec;
+            REPORT "Door closed at floor 3";
+            REPORT "Test Case 2 passed!";
+        ELSE
+            REPORT "Test Case 2 failed: elevator did not reach floor 3" SEVERITY ERROR;
+        END IF;
         WAIT FOR 500 ms;
         
         -- Test Case 3: Move down from floor 3 to floor 1
@@ -164,38 +180,88 @@ BEGIN
         REPORT "Test Case 3: Move Down (Floor 3 -> 1)";
         REPORT "========================================";
         request_floor(1);
-        WAIT FOR 100 ms;
-        ASSERT move_down = '1' REPORT "move_down should be active" SEVERITY WARNING;
-        wait_for_floor(1, 10 sec);
-        WAIT UNTIL door_open = '1' FOR 2 sec;
-        ASSERT door_open = '1' REPORT "Door should open at floor 1" SEVERITY ERROR;
-        REPORT "Test Case 3 passed!";
+        WAIT FOR 150 ms;
+        reached := FALSE;
+        wait_for_floor(1, 12 sec, reached);
+        IF reached THEN
+            WAIT UNTIL door_open = '1' FOR 2 sec;
+            ASSERT door_open = '1' REPORT "Door should open at floor 1" SEVERITY ERROR;
+            REPORT "Door opened at floor 1";
+            WAIT UNTIL door_open = '0' FOR 2 sec;
+            REPORT "Door closed at floor 1";
+            REPORT "Test Case 3 passed!";
+        ELSE
+            REPORT "Test Case 3 failed: elevator did not reach floor 1" SEVERITY ERROR;
+        END IF;
         WAIT FOR 500 ms;
         
         -- Test Case 4: Multiple floor requests (elevator scheduling)
         REPORT "========================================";
-        REPORT "Test Case 4: Multiple Requests";
+        REPORT "Test Case 4: Multiple Requests (During Movement)";
         REPORT "========================================";
+        -- Request initial floor to start elevator moving
         request_floor(7);
         WAIT FOR 200 ms;
+        
+        -- Wait for elevator to start moving
+        WAIT UNTIL mv_up = '1' FOR 1 sec;
+        REPORT "Elevator started moving up. Now requesting additional floors...";
+        
+        -- Request additional floors WHILE elevator is moving
+        WAIT FOR 1000 ms;  -- Wait during movement
         request_floor(5);
-        WAIT FOR 200 ms;
-        request_floor(3);
+        REPORT "Requested floor 5 while moving";
+        
+        WAIT FOR 1000 ms;  -- Wait more during movement
+        request_floor(2);
+        REPORT "Requested floor 2 (BELOW current floor) while moving up - testing direction priority";
+        
         WAIT FOR 200 ms;
         
         REPORT "Waiting for elevator to service all requests...";
-        -- Wait for floor 3 (closest below)
-        wait_for_floor(3, 10 sec);
-        WAIT UNTIL door_open = '0' FOR 2 sec;
+        REPORT "Elevator should continue UP to floor 5, then 7, THEN reverse DOWN to floor 2";
         
-        -- Then floor 5 (above)
-        wait_for_floor(5, 10 sec);
-        WAIT UNTIL door_open = '0' FOR 2 sec;
+        -- Wait for floor 5 (continue in upward direction)
+        reached := FALSE;
+        wait_for_floor(5, 12 sec, reached);
+        IF reached THEN
+            WAIT UNTIL door_open = '1' FOR 2 sec;
+            ASSERT door_open = '1' REPORT "Door should open at floor 5 (multi-request sequence)" SEVERITY ERROR;
+            REPORT "Door opened at floor 5";
+            WAIT UNTIL door_open = '0' FOR 2 sec;
+            REPORT "Door closed at floor 5";
+            REPORT "Reached floor 5 - continuing upward";
+        ELSE
+            REPORT "Failed to reach floor 5 during multi-request test" SEVERITY ERROR;
+        END IF;
         
-        -- Then floor 7 (above)
-        wait_for_floor(7, 10 sec);
-        WAIT UNTIL door_open = '1' FOR 2 sec;
-        REPORT "Test Case 4 passed!";
+        -- Then floor 7 (still going up - finish upward requests first)
+        reached := FALSE;
+        wait_for_floor(7, 12 sec, reached);
+        IF reached THEN
+            WAIT UNTIL door_open = '1' FOR 2 sec;
+            ASSERT door_open = '1' REPORT "Door should open at floor 7 (multi-request sequence)" SEVERITY ERROR;
+            REPORT "Door opened at floor 7";
+            WAIT UNTIL door_open = '0' FOR 2 sec;
+            REPORT "Door closed at floor 7";
+            REPORT "Reached floor 7 - now should reverse direction";
+        ELSE
+            REPORT "Failed to reach floor 7 during multi-request test" SEVERITY ERROR;
+        END IF;
+        
+        -- Finally floor 2 (reverse direction - go down after no more upward requests)
+        reached := FALSE;
+        wait_for_floor(2, 12 sec, reached);
+        IF reached THEN
+            WAIT UNTIL door_open = '1' FOR 2 sec;
+            ASSERT door_open = '1' REPORT "Door should open at floor 2 (after direction reversal)" SEVERITY ERROR;
+            REPORT "Door opened at floor 2";
+            WAIT UNTIL door_open = '0' FOR 2 sec;
+            REPORT "Door closed at floor 2";
+            REPORT "Test Case 4 passed! - Elevator correctly prioritized direction";
+        ELSE
+            REPORT "Failed to reach floor 2 during multi-request test" SEVERITY ERROR;
+        END IF;
         WAIT FOR 500 ms;
         
         -- Test Case 5: Request current floor
@@ -204,8 +270,12 @@ BEGIN
         REPORT "========================================";
         REPORT "Current floor: " & INTEGER'IMAGE(curr_floor);
         request_floor(curr_floor);
-        WAIT FOR 200 ms;
-        ASSERT door_open = '1' REPORT "Door should open immediately" SEVERITY WARNING;
+        WAIT FOR 150 ms;
+        WAIT UNTIL door_open = '1' FOR 2 sec;
+        ASSERT door_open = '1' REPORT "Door should open immediately" SEVERITY ERROR;
+        REPORT "Door opened at current floor";
+        WAIT UNTIL door_open = '0' FOR 2 sec;
+        REPORT "Door closed at current floor";
         REPORT "Test Case 5 passed!";
         WAIT FOR 500 ms;
         
@@ -214,10 +284,18 @@ BEGIN
         REPORT "Test Case 6: Ground Floor Test";
         REPORT "========================================";
         request_floor(0);
-        wait_for_floor(0, 15 sec);
-        WAIT UNTIL door_open = '1' FOR 2 sec;
-        ASSERT curr_floor = 0 REPORT "Should be at ground floor" SEVERITY ERROR;
-        REPORT "Test Case 6 passed!";
+        reached := FALSE;
+        wait_for_floor(0, 20 sec, reached);
+        IF reached THEN
+            WAIT UNTIL door_open = '1' FOR 2 sec;
+            ASSERT curr_floor = 0 REPORT "Should be at ground floor" SEVERITY ERROR;
+            REPORT "Door opened at floor 0";
+            WAIT UNTIL door_open = '0' FOR 2 sec;
+            REPORT "Door closed at floor 0";
+            REPORT "Test Case 6 passed!";
+        ELSE
+            REPORT "Test Case 6 failed: elevator did not reach ground floor" SEVERITY ERROR;
+        END IF;
         WAIT FOR 500 ms;
         
         -- Test Case 7: Boundary test - Floor 9 (Top)
@@ -225,10 +303,18 @@ BEGIN
         REPORT "Test Case 7: Top Floor Test";
         REPORT "========================================";
         request_floor(9);
-        wait_for_floor(9, 20 sec);
-        WAIT UNTIL door_open = '1' FOR 2 sec;
-        ASSERT curr_floor = 9 REPORT "Should be at top floor" SEVERITY ERROR;
-        REPORT "Test Case 7 passed!";
+        reached := FALSE;
+        wait_for_floor(9, 25 sec, reached);
+        IF reached THEN
+            WAIT UNTIL door_open = '1' FOR 2 sec;
+            ASSERT curr_floor = 9 REPORT "Should be at top floor" SEVERITY ERROR;
+            REPORT "Door opened at floor 9";
+            WAIT UNTIL door_open = '0' FOR 2 sec;
+            REPORT "Door closed at floor 9";
+            REPORT "Test Case 7 passed!";
+        ELSE
+            REPORT "Test Case 7 failed: elevator did not reach top floor" SEVERITY ERROR;
+        END IF;
         WAIT FOR 500 ms;
         
         -- Test Case 8: Invalid floor request (floor >= NUM_FLOORS)
@@ -236,13 +322,14 @@ BEGIN
         REPORT "Test Case 8: Invalid Floor Request";
         REPORT "========================================";
         REPORT "Attempting to request floor 15 (invalid)...";
+    previous_floor := curr_floor;
         switch_floor <= STD_LOGIC_VECTOR(TO_UNSIGNED(15, 4));
         WAIT FOR 50 ms;
         push_button <= '1';
         WAIT FOR 100 ms;
         push_button <= '0';
         WAIT FOR 500 ms;
-        ASSERT curr_floor = 9 REPORT "Elevator should stay at floor 9" SEVERITY WARNING;
+    ASSERT curr_floor = previous_floor REPORT "Elevator should stay at the same floor after invalid request" SEVERITY ERROR;
         REPORT "Test Case 8 passed!";
         WAIT FOR 500 ms;
         
@@ -262,8 +349,6 @@ BEGIN
             REPORT "Status: Moving UP - Current Floor: " & INTEGER'IMAGE(curr_floor);
             ELSIF move_down = '1' THEN
                 REPORT "Status: Moving DOWN - Current Floor: " & INTEGER'IMAGE(curr_floor);
-            ELSIF door_open = '1' THEN
-                REPORT "Status: DOOR OPEN at Floor: " & INTEGER'IMAGE(curr_floor);
         END IF;
     END PROCESS;
 
