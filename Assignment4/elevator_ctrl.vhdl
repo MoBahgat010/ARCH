@@ -167,7 +167,7 @@ BEGIN
     END PROCESS resolve_target;
     
     -- Main elevator fsm
-    unit_control: PROCESS(clk, reset)
+    unit_control: PROCESS(clk)
         -- Procedure for timer-based state transitions
         PROCEDURE handle_timer(
             SIGNAL timer : INOUT INTEGER;
@@ -184,19 +184,7 @@ BEGIN
         END PROCEDURE;
         
     BEGIN
-        IF reset = '1' THEN
-            current_state <= IDLE;
-            prev_state <= IDLE;
-            current_floor <= 0;
-            door_timer <= 0;
-            move_timer <= 0;
-            mv_up <= '0';
-            move_down <= '0';
-            door_open <= '0';
-            last_direction <= DIR_NONE;
-            reset_clk_counter <= '0';
-            
-        ELSIF rising_edge(clk) THEN
+        IF rising_edge(clk) THEN
             prev_state <= current_state;
             
             CASE current_state IS
@@ -236,8 +224,11 @@ BEGIN
                                 current_floor <= current_floor + 1;
                             END IF;
                             
-                            IF current_floor + 1 >= target_floor THEN
-                                current_state <= DOOR_OPENING;
+                            -- Check target after completing floor transition
+                            IF target_floor = -1 THEN
+                                current_state <= IDLE;  -- Go to IDLE if no target (reset)
+                            ELSIF current_floor + 1 >= target_floor THEN
+                                current_state <= DOOR_OPENING;  -- Open door if reached target
                             END IF;
                         END IF;
                     END IF;
@@ -257,8 +248,11 @@ BEGIN
                                 current_floor <= current_floor - 1;
                             END IF;
                             
-                            IF current_floor - 1 <= target_floor THEN
-                                current_state <= DOOR_OPENING;
+                            -- Check target after completing floor transition
+                            IF target_floor = -1 THEN
+                                current_state <= IDLE;  -- Go to IDLE if no target (reset)
+                            ELSIF current_floor - 1 <= target_floor THEN
+                                current_state <= DOOR_OPENING;  -- Open door if reached target
                             END IF;
                         END IF;
                     END IF;

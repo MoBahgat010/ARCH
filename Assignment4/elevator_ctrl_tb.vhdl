@@ -309,6 +309,111 @@ BEGIN
         REPORT "[PASS] Test Case 9 passed! - Correctly handled dynamic mid-journey requests";
         WAIT FOR 2500 ms;  -- Wait for door to close
         
+        -- Test Case 10: Reset during MOVING_UP
+        REPORT "========================================";
+        REPORT "Test Case 10: Reset During MOVING_UP";
+        REPORT "========================================";
+        -- Request floor 8 from floor 2
+        request_floor(8);
+        REPORT "Requested floor 8 from floor 2";
+        WAIT FOR 200 ms;
+        
+        -- Wait for elevator to start moving up
+        WAIT UNTIL mv_up = '1' FOR 3 sec;
+        ASSERT mv_up = '1' REPORT "Elevator should be moving up" SEVERITY ERROR;
+        
+        -- Wait 1 second into the movement (halfway through floor transition)
+        WAIT FOR 1 sec;
+        REPORT "Asserting reset during MOVING_UP (1 sec into movement)";
+        reset <= '1';
+        WAIT FOR 100 ms;
+        reset <= '0';
+        WAIT FOR 100 ms;
+        
+        -- Elevator should finish its current 2-second movement
+        REPORT "Waiting for elevator to complete its floor transition...";
+        WAIT FOR 1.2 sec;  -- Remaining time to complete the 2-second movement
+        
+        -- After completing movement, elevator should be IDLE (not open door)
+        WAIT FOR 500 ms;
+        ASSERT mv_up = '0' REPORT "Elevator should not be moving up after reset" SEVERITY ERROR;
+        ASSERT move_down = '0' REPORT "Elevator should not be moving down after reset" SEVERITY ERROR;
+        ASSERT door_open = '0' REPORT "Door should NOT open after reset during movement" SEVERITY ERROR;
+        REPORT "Floor after reset: " & INTEGER'IMAGE(curr_floor);
+        REPORT "[PASS] Test Case 10 passed! - Reset during MOVING_UP handled correctly";
+        WAIT FOR 1 sec;
+        
+        -- Test Case 11: Reset during MOVING_DOWN
+        REPORT "========================================";
+        REPORT "Test Case 11: Reset During MOVING_DOWN";
+        REPORT "========================================";
+        -- Current floor should be 3 or 4, request floor 0
+        REPORT "Current floor: " & INTEGER'IMAGE(curr_floor);
+        request_floor(0);
+        REPORT "Requested floor 0 from floor " & INTEGER'IMAGE(curr_floor);
+        WAIT FOR 200 ms;
+        
+        -- Wait for elevator to start moving down
+        WAIT UNTIL move_down = '1' FOR 3 sec;
+        ASSERT move_down = '1' REPORT "Elevator should be moving down" SEVERITY ERROR;
+        
+        -- Wait 1.5 seconds into the movement
+        WAIT FOR 1.5 sec;
+        REPORT "Asserting reset during MOVING_DOWN (1.5 sec into movement)";
+        reset <= '1';
+        WAIT FOR 100 ms;
+        reset <= '0';
+        WAIT FOR 100 ms;
+        
+        -- Elevator should finish its current 2-second movement
+        REPORT "Waiting for elevator to complete its floor transition...";
+        WAIT FOR 0.7 sec;  -- Remaining time to complete the 2-second movement
+        
+        -- After completing movement, elevator should be IDLE (not open door)
+        WAIT FOR 500 ms;
+        ASSERT mv_up = '0' REPORT "Elevator should not be moving up after reset" SEVERITY ERROR;
+        ASSERT move_down = '0' REPORT "Elevator should not be moving down after reset" SEVERITY ERROR;
+        ASSERT door_open = '0' REPORT "Door should NOT open after reset during movement" SEVERITY ERROR;
+        REPORT "Floor after reset: " & INTEGER'IMAGE(curr_floor);
+        REPORT "[PASS] Test Case 11 passed! - Reset during MOVING_DOWN handled correctly";
+        WAIT FOR 1 sec;
+        
+        -- Test Case 12: Reset during DOOR_OPENING
+        REPORT "========================================";
+        REPORT "Test Case 12: Reset During DOOR_OPENING";
+        REPORT "========================================";
+        -- Request a nearby floor
+        REPORT "Current floor: " & INTEGER'IMAGE(curr_floor);
+        request_floor(curr_floor + 2);
+        REPORT "Requested floor " & INTEGER'IMAGE(curr_floor + 2);
+        WAIT FOR 200 ms;
+        
+        -- Wait for elevator to reach the floor and door to open
+        WAIT UNTIL door_open = '1' FOR 10 sec;
+        ASSERT door_open = '1' REPORT "Door should be opening" SEVERITY ERROR;
+        REPORT "Door opened at floor " & INTEGER'IMAGE(curr_floor);
+        
+        -- Wait 1 second into door opening (halfway through)
+        WAIT FOR 1 sec;
+        REPORT "Asserting reset during DOOR_OPENING (1 sec into opening)";
+        reset <= '1';
+        WAIT FOR 100 ms;
+        reset <= '0';
+        WAIT FOR 100 ms;
+        
+        -- Door should finish its 2-second opening time
+        REPORT "Waiting for door to complete its opening cycle...";
+        WAIT FOR 1.2 sec;  -- Remaining time to complete the 2-second opening
+        
+        -- After completing door opening, elevator should be IDLE
+        WAIT FOR 500 ms;
+        ASSERT mv_up = '0' REPORT "Elevator should not be moving up after reset" SEVERITY ERROR;
+        ASSERT move_down = '0' REPORT "Elevator should not be moving down after reset" SEVERITY ERROR;
+        ASSERT door_open = '0' REPORT "Door should be closed after completing opening cycle" SEVERITY ERROR;
+        REPORT "Floor after reset: " & INTEGER'IMAGE(curr_floor);
+        REPORT "[PASS] Test Case 12 passed! - Reset during DOOR_OPENING handled correctly";
+        WAIT FOR 1 sec;
+        
         -- End of simulation
         REPORT "========================================";
         REPORT "All test cases completed!";
