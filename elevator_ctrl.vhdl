@@ -42,6 +42,12 @@ ARCHITECTURE behavior OF elevator_ctrl IS
     SIGNAL clk_counter       : INTEGER RANGE 0 TO CLK_FREQ - 1 := 0;
     SIGNAL reset_clk_counter : STD_LOGIC := '0';
     
+    -- Button synchronization signals
+    SIGNAL push_button_sync1 : STD_LOGIC := '1';
+    SIGNAL push_button_sync2 : STD_LOGIC := '1';
+    SIGNAL push_button_prev  : STD_LOGIC := '1';
+    SIGNAL button_pressed    : STD_LOGIC := '0';
+    
     -- Request and control signals
     SIGNAL floor_requests : STD_LOGIC_VECTOR(NUM_FLOORS-1 DOWNTO 0) := (OTHERS => '0');
     SIGNAL target_floor   : INTEGER RANGE -1 TO NUM_FLOORS-1 := -1;
@@ -71,6 +77,29 @@ BEGIN
             ssd_out => ssd_out
         );
     
+    -- Button Synchronizer: synchronize async button to clock domain
+    button_sync: PROCESS(clk, reset)
+    BEGIN
+        IF reset = '1' THEN
+            push_button_sync1 <= '1';
+            push_button_sync2 <= '1';
+            push_button_prev <= '1';
+            button_pressed <= '0';
+        ELSIF rising_edge(clk) THEN
+            -- Two-stage synchronizer
+            push_button_sync1 <= push_button;
+            push_button_sync2 <= push_button_sync1;
+            push_button_prev <= push_button_sync2;
+            
+            -- Detect falling edge (button press)
+            IF push_button_prev = '1' AND push_button_sync2 = '0' THEN
+                button_pressed <= '1';
+            ELSE
+                button_pressed <= '0';
+            END IF;
+        END IF;
+    END PROCESS button_sync;
+    
     -- Clock Enable Generator: 1-second pulse for timers
     clk_enable_gen: PROCESS(clk, reset)
     BEGIN
@@ -93,17 +122,20 @@ BEGIN
     END PROCESS clk_enable_gen;
     
     -- Request Register: handle floor button presses and clear served requests
-    request_register: PROCESS(reset, push_button, clk)
+    request_register: PROCESS(clk, reset)
         VARIABLE requested_floor : INTEGER;
     BEGIN
         IF reset = '1' THEN
             floor_requests <= (OTHERS => '0');
-        ELSIF falling_edge(push_button) THEN
-            requested_floor := TO_INTEGER(UNSIGNED(switch_floor));
-            IF requested_floor < NUM_FLOORS THEN
-                floor_requests(requested_floor) <= '1';
-            END IF;
         ELSIF rising_edge(clk) THEN
+            -- Register new floor request when button is pressed
+            IF button_pressed = '1' THEN
+                requested_floor := TO_INTEGER(UNSIGNED(switch_floor));
+                IF requested_floor < NUM_FLOORS THEN
+                    floor_requests(requested_floor) <= '1';
+                END IF;
+            END IF;
+            
             -- Clear served request when door opens
             IF current_state = DOOR_OPENING AND prev_state /= DOOR_OPENING AND 
                target_floor >= 0 AND target_floor < NUM_FLOORS THEN
@@ -129,8 +161,8 @@ BEGIN
         IF NOT found THEN
             IF last_direction = DIR_UP OR last_direction = DIR_NONE THEN
                 -- Search upward from current floor
-                FOR i IN current_floor + 1 TO NUM_FLOORS - 1 LOOP
-                    IF floor_requests(i) = '1' THEN
+                FOR i IN 0 TO NUM_FLOORS - 1 LOOP
+                    IF i > current_floor AND floor_requests(i) = '1' THEN
                         target_floor <= i;
                         found := TRUE;
                         EXIT;
@@ -139,8 +171,8 @@ BEGIN
                 
                 -- If not found, search downward
                 IF NOT found THEN
-                    FOR i IN current_floor - 1 DOWNTO 0 LOOP
-                        IF floor_requests(i) = '1' THEN
+                    FOR i IN NUM_FLOORS - 1 DOWNTO 0 LOOP
+                        IF i < current_floor AND floor_requests(i) = '1' THEN
                             target_floor <= i;
                             found := TRUE;
                             EXIT;
@@ -150,8 +182,8 @@ BEGIN
                 
             ELSIF last_direction = DIR_DOWN THEN
                 -- Search downward from current floor
-                FOR i IN current_floor - 1 DOWNTO 0 LOOP
-                    IF floor_requests(i) = '1' THEN
+                FOR i IN NUM_FLOORS - 1 DOWNTO 0 LOOP
+                    IF i < current_floor AND floor_requests(i) = '1' THEN
                         target_floor <= i;
                         found := TRUE;
                         EXIT;
@@ -160,8 +192,8 @@ BEGIN
                 
                 -- If not found, search upward
                 IF NOT found THEN
-                    FOR i IN current_floor + 1 TO NUM_FLOORS - 1 LOOP
-                        IF floor_requests(i) = '1' THEN
+                    FOR i IN 0 TO NUM_FLOORS - 1 LOOP
+                        IF i > current_floor AND floor_requests(i) = '1' THEN
                             target_floor <= i;
                             found := TRUE;
                             EXIT;
@@ -173,9 +205,20 @@ BEGIN
     END PROCESS resolve_target;
     
     -- Main elevator fsm
-    unit_control: PROCESS(clk)
+    unit_control: PROCESS(clk, reset)
     BEGIN
-        IF rising_edge(clk) THEN
+        IF reset = '1' THEN
+            current_state <= IDLE;
+            prev_state <= IDLE;
+            current_floor <= 0;
+            last_direction <= DIR_NONE;
+            mv_up <= '0';
+            move_down <= '0';
+            door_open <= '0';
+            reset_clk_counter <= '0';
+            move_timer <= 0;
+            door_timer <= 0;
+        ELSIF rising_edge(clk) THEN
             prev_state <= current_state;
             
             CASE current_state IS
@@ -217,9 +260,9 @@ BEGIN
                             
                             -- Check target after completing floor transition
                             IF target_floor = -1 THEN
-                                current_state <= IDLE;  -- Go to IDLE if no target (reset)
+                                current_state <= IDLE;
                             ELSIF current_floor + 1 >= target_floor THEN
-                                current_state <= DOOR_OPENING;  -- Open door if reached target
+                                current_state <= DOOR_OPENING;
                             END IF;
                         END IF;
                     END IF;
@@ -241,9 +284,9 @@ BEGIN
                             
                             -- Check target after completing floor transition
                             IF target_floor = -1 THEN
-                                current_state <= IDLE;  -- Go to IDLE if no target (reset)
+                                current_state <= IDLE;
                             ELSIF current_floor - 1 <= target_floor THEN
-                                current_state <= DOOR_OPENING;  -- Open door if reached target
+                                current_state <= DOOR_OPENING;
                             END IF;
                         END IF;
                     END IF;
